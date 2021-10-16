@@ -380,13 +380,14 @@ def save_masks(images, masks, flows, file_names, png=True, tif=False, channels=[
         for ext in exts:
             imsave(os.path.join(maskdir,basename + '_cp_masks' + suffix + ext), masks)
             
+    # MOD: avoid plotting stuff
     if png and MATPLOTLIB and not min(images.shape) > 3:
         img = images.copy()
         if img.ndim<3:
             img = img[:,:,np.newaxis]
         elif img.shape[0]<8:
             np.transpose(img, (1,2,0))
-        
+
         fig = plt.figure(figsize=(12,3))
         plot.show_segmentation(fig, img, masks, flows[0], skel=skel)
         fig.savefig(os.path.join(savedir,basename + '_cp_output' + suffix + '.png'), dpi=300)

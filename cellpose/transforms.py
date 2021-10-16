@@ -658,7 +658,7 @@ def random_rotate_and_resize(X, Y=None, scale_range=1., gamma_range=0.5, xy = (2
     # [Y[i][1:] for i in inds] is necessary because the original transform function does not use masks (entry 0). 
     # This used to be done in the original function call. 
     if not skel:
-        return original_random_rotate_and_resize(X, Y=[Y[i][1:] for i in inds], scale_range=scale_range, xy=xy,
+        return original_random_rotate_and_resize(X, Y=[Y[i][1:] for i in range(len(Y))], scale_range=scale_range, xy=xy,
                                                  do_flip=do_flip, rescale=rescale, unet=unet)
 
     # While in other parts of Cellpose channels are put last by default, here we have chan x Ly x Lx 
