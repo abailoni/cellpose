@@ -58,6 +58,8 @@ def main():
     
     # model settings 
     parser.add_argument('--pretrained_model', required=False, default='cyto', type=str, help='model to use')
+    parser.add_argument('--use_size_model', action='store_true', help='In case of user-trained model, whether to '
+                                                                                      'look for user-trained size model.')
     parser.add_argument('--unet', required=False,
                         default=0, type=int, help='run standard unet instead of cellpose flow output')
     parser.add_argument('--nclasses', required=False,
@@ -86,7 +88,7 @@ def main():
     # output settings
     parser.add_argument('--save_png', action='store_true', help='save masks as png and outlines as text file for ImageJ')
     parser.add_argument('--save_tif', action='store_true', help='save masks as tif and outlines as text file for ImageJ')
-    parser.add_argument('--no_npy', action='store_false', help='suppress saving of npy')
+    parser.add_argument('--no_npy', action='store_true', help='suppress saving of npy')
     parser.add_argument('--savedir', required=False, 
                         default=None, type=str, help='folder to which segmentation results will be saved (defaults to input image directory)')
     parser.add_argument('--dir_above', action='store_true', help='save output folders adjacent to image folder instead of inside it (off by default)')
@@ -200,6 +202,9 @@ def main():
         device, gpu = models.assign_device((not args.mxnet), args.use_gpu)
 
         if not args.train and not args.train_size:
+            # -------------------
+            # Inference:
+            # -------------------
             tic = time.time()
             if not (args.pretrained_model=='cyto' or args.pretrained_model=='nuclei' or args.pretrained_model=='cyto2'):
                 cpmodel_path = args.pretrained_model
@@ -227,14 +232,21 @@ def main():
                                             torch=(not args.mxnet),skel=args.skel)
             else:
                 if args.all_channels:
-                    channels = None  
-                model = models.CellposeModel(gpu=gpu, device=device, 
+                    channels = None
+                if args.use_size_model and args.diameter == 0:
+                    # assert args.nclasses == 3, "U-Net and skel not supported when using size model"
+                    # TODO: is there a case where diam_mean is not 30. for the user-trained model...?
+                    model = models.Cellpose(gpu=gpu, device=device, model_type="user-trained",
+                                            pretrained_model=cpmodel_path, net_avg=False, diam_mean=30.,
+                                            torch=(not args.mxnet), skel=args.skel)
+                else:
+                    model = models.CellposeModel(gpu=gpu, device=device,
                                              pretrained_model=cpmodel_path,
                                              torch=(not args.mxnet),
                                              nclasses=args.nclasses,skel=args.skel)
 
             if args.diameter==0:
-                if args.pretrained_model=='cyto' or args.pretrained_model=='nuclei' or args.pretrained_model=='cyto2':
+                if args.pretrained_model=='cyto' or args.pretrained_model=='nuclei' or args.pretrained_model=='cyto2' or args.use_size_model:
                     diameter = None
                     logger.info('>>>> estimating diameter for each image')
                 else:
@@ -271,7 +283,7 @@ def main():
                 if args.exclude_on_edges:
                     masks = utils.remove_edge_masks(masks)
                 if not args.no_npy:
-                    io.masks_flows_to_seg(image, masks, flows, diams, image_name, channels)
+                    io.masks_flows_to_seg(image, masks, flows, diams, image_name, channels, savedir=args.savedir)
                 if saving_something:
                     io.save_masks(image, masks, flows, image_name, png=args.save_png, tif=args.save_tif,
                                   save_flows=args.save_flows,save_outlines=args.save_outlines,
@@ -279,15 +291,18 @@ def main():
                                   save_txt=args.save_txt,in_folders=args.in_folders)
             logger.info('>>>> completed in %0.3f sec'%(time.time()-tic))
         else:
+            # ------------------
+            # TRAINING:
+            # ------------------
             if args.pretrained_model=='cyto' or args.pretrained_model=='nuclei' or args.pretrained_model=='cyto2':
                 if args.mxnet and args.pretrained_model=='cyto2':
                     logger.warning('cyto2 model not available in mxnet, using cyto model')
                     args.pretrained_model = 'cyto'
                 cpmodel_path = models.model_path(args.pretrained_model, 0, not args.mxnet)
-                if args.pretrained_model=='cyto':
-                    szmean = 30.
-                else:
+                if args.pretrained_model == 'nuclei':
                     szmean = 17.
+                else:
+                    szmean = 30.
             else:
                 cpmodel_path = os.fspath(args.pretrained_model)
                 szmean = 30.
@@ -307,7 +322,7 @@ def main():
             else:
                 nchan = 2 
 
-            
+
             # model path
             if not os.path.exists(cpmodel_path):
                 if not args.train:

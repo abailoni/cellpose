@@ -71,7 +71,8 @@ class Cellpose():
         run model using torch if available
 
     """
-    def __init__(self, gpu=False, model_type='cyto', net_avg=True, device=None, torch=True, model_dir=None, skel=False):
+    def __init__(self, gpu=False, model_type='cyto', net_avg=True, device=None, torch=True, pretrained_model=None, skel=False,
+                 diam_mean=None):
         super(Cellpose, self).__init__()
         if not torch:
             if not MXNET_ENABLED:
@@ -86,14 +87,29 @@ class Cellpose():
         if model_type=='cyto2' and not self.torch:
             model_type='cyto'
         
-        self.skel = skel        
-        
-        self.pretrained_model = [model_path(model_type, j, torch) for j in range(4)]
-        self.pretrained_size = size_model_path(model_type, torch)
-        self.diam_mean = 30. if model_type!='nuclei' else 17.
-        
-        if not net_avg:
-            self.pretrained_model = self.pretrained_model[0]
+        self.skel = skel
+
+
+        if model_type == 'user-trained':
+            assert pretrained_model is not None, "User-trained model path not specified"
+            assert not net_avg, "Net average currently only supported for cyto and nuclei models"
+            assert diam_mean is not None, "For user-trained model, please specify diam_mean"
+
+            assert os.path.exists(pretrained_model), "Path of specified model does not exists"
+            pretrained_size_path = pretrained_model + "_size.npy"
+            self.pretrained_model = pretrained_model
+            self.pretrained_size = pretrained_size_path
+            self.diam_mean = diam_mean
+        else:
+            if diam_mean is not None:
+                models_logger.warning('>>> diam_mean set to default of model {}'.format(model_type))
+            self.diam_mean = 30. if model_type != 'nuclei' else 17.
+            self.pretrained_model = [model_path(model_type, j, torch) for j in range(4)]
+            self.pretrained_size = size_model_path(model_type, torch)
+
+
+            if not net_avg:
+                self.pretrained_model = self.pretrained_model[0]
 
         self.cp = CellposeModel(device=self.device, gpu=self.gpu,
                                 pretrained_model=self.pretrained_model,
@@ -327,8 +343,9 @@ class CellposeModel(UnetModel):
             if (pretrained_model and not os.path.exists(pretrained_model[0])):
                 models_logger.warning('pretrained model has incorrect path')
             models_logger.info(f'>>{pretrained_model_string}<< model set to be used')
-            
-            diam_mean = 30. if pretrained_model_string!='nuclei' else 17. # cyto2 still uses 17, right? 
+
+            # TODO: check
+            diam_mean = 30. if pretrained_model_string!='nuclei' else 17. # cyto2 still uses 30, right?
             
             pretrained_model = [model_path(pretrained_model_string, j, torch) for j in range(4)]
             pretrained_model = pretrained_model[0] if not net_avg else pretrained_model 

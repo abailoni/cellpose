@@ -22,6 +22,7 @@ try:
     import torch
 #     from GPUtil import showUtilization as gpu_usage #for gpu memory debugging 
     from torch import nn
+    from torch import optim as torch_optim
     import torch_optimizer as optim # for RADAM optimizer
     from torch.utils import mkldnn as mkldnn_utils
     from . import resnet_torch
@@ -796,19 +797,29 @@ class UnetModel():
         # best optimizer I tested seemed to be RAdam, about 2x as fast as SGD and very stable.
         # Ranger21 is in beta and might be better/faster, but more testing is needed.
         # Ranger21 has a convenient current_lr field, whereas RAdam doesn't and I just set this field to the learning rate
-            self.optimizer = optim.RAdam(self.net.parameters(), lr=learning_rate, betas=(0.95, 0.999), #changed to .95
-                                         eps=1e-08, weight_decay=weight_decay)
-            core_logger.info('>>> Using RAdam optimizer')
-#             self.optimizer = optim.AdaBound(self.net.parameters(), lr=learning_rate, betas=(0.9, 0.999), 
-#                                 gamma=1e-3, eps=1e-08, final_lr=0.15, weight_decay=weight_decay)
-#             print('>>> Using AdaBound optimizer')
-#             self.optimizer = Ranger21(self.net.parameters(), lr=learning_rate, weight_decay=weight_decay, num_batches_per_epoch=self.batch_size, 
-#                                       num_epochs=self.n_epochs,num_warmup_iterations=20*self.batch_size, betas=(0.9, 0.999), eps=1e-08)
-#             print('>>> Using Ranger21 optimizer')
-            self.optimizer.current_lr = learning_rate
+#             self.optimizer = optim.RAdam(self.net.parameters(), lr=learning_rate, betas=(0.95, 0.999), #changed to .95
+#                                          eps=1e-08, weight_decay=weight_decay)
+#             core_logger.info('>>> Using RAdam optimizer')
+# #             self.optimizer = optim.AdaBound(self.net.parameters(), lr=learning_rate, betas=(0.9, 0.999),
+# #                                 gamma=1e-3, eps=1e-08, final_lr=0.15, weight_decay=weight_decay)
+# #             print('>>> Using AdaBound optimizer')
+# #             self.optimizer = Ranger21(self.net.parameters(), lr=learning_rate, weight_decay=weight_decay, num_batches_per_epoch=self.batch_size,
+# #                                       num_epochs=self.n_epochs,num_warmup_iterations=20*self.batch_size, betas=(0.9, 0.999), eps=1e-08)
+# #             print('>>> Using Ranger21 optimizer')
+#             self.optimizer.current_lr = learning_rate
+            core_logger.info('>>> Using SGD optimizer')
+            self.optimizer = torch_optim.SGD(self.net.parameters(), lr=learning_rate,
+                                   momentum=momentum, weight_decay=weight_decay)
         else:
             self.optimizer = gluon.Trainer(self.net.collect_params(), 'sgd',{'learning_rate': learning_rate,
                                 'momentum': momentum, 'wd': weight_decay})
+
+    def _set_learning_rate(self, lr):
+        if self.torch:
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = lr
+        else:
+            self.optimizer.set_learning_rate(lr)
 
     def _set_criterion(self):
         if self.unet:
@@ -849,6 +860,7 @@ class UnetModel():
 
         # compute average cell diameter
         if rescale:
+            core_logger.info('>>>> I am rescaling images automatically during training!<<<<')
             diam_train = np.array([utils.diameters(train_labels[k][0],skel=self.skel)[0] for k in range(len(train_labels))])
             diam_train[diam_train<5] = 5.
             if test_data is not None:
@@ -868,7 +880,20 @@ class UnetModel():
         if test_data is not None:
             core_logger.info('>>>> ntest = %d'%len(test_data))
         core_logger.info(train_data[0].shape)
-        
+
+        # set learning rate schedule
+        LR = np.linspace(0, self.learning_rate, 10)
+        if self.n_epochs > 250 and self.n_epochs <= 800:
+            LR = np.append(LR, self.learning_rate*np.ones(self.n_epochs-100))
+            for i in range(10):
+                LR = np.append(LR, LR[-1]/2 * np.ones(10))
+        elif self.n_epochs > 1500:
+            LR = np.append(LR, self.learning_rate*np.ones(self.n_epochs-1400))
+            for i in range(14):
+                LR = np.append(LR, LR[-1]/2 * np.ones(100))
+        else:
+            LR = np.append(LR, self.learning_rate*np.ones(max(0,self.n_epochs-10)))
+
         tic = time.time()
 
         lavg, nsum = 0, 0
@@ -891,7 +916,8 @@ class UnetModel():
         for iepoch in range(self.n_epochs):
             np.random.seed(iepoch)
             rperm = np.random.permutation(nimg)
-            
+            self._set_learning_rate(LR[iepoch])
+
             for ibatch in range(0,nimg,batch_size):
                 inds = rperm[ibatch:ibatch+batch_size]
                 rsc = diam_train[inds] / self.diam_mean if rescale else np.ones(len(inds), np.float32)
@@ -926,11 +952,10 @@ class UnetModel():
                         nsum += len(imgi)
 
                     core_logger.info('Epoch %d, Time %4.1fs, Loss %2.4f, Loss Test %2.4f, LR %2.4f'%
-                            (iepoch, time.time()-tic, lavg, lavgt/nsum, self.optimizer.current_lr))
+                            (iepoch, time.time()-tic, lavg, lavgt/nsum, LR[iepoch]))
                 else:
                     core_logger.info('Epoch %d, Time %4.1fs, Loss %2.4f, LR %2.4f'%
-                            (iepoch, time.time()-tic, lavg, self.optimizer.current_lr))
-                
+                            (iepoch, time.time()-tic, lavg, LR[iepoch]))
                 lavg, nsum = 0, 0
                             
             if save_path is not None:

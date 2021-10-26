@@ -190,7 +190,7 @@ def load_train_test_data(train_dir, test_dir=None, image_filter=None, mask_filte
 
 
 
-def masks_flows_to_seg(images, masks, flows, diams, file_names, channels=None):
+def masks_flows_to_seg(images, masks, flows, diams, file_names, channels=None, savedir=None):
     """ save output of model eval to be loaded in GUI 
 
     can be list output (run on multiple images) or single output (run on single image)
@@ -219,7 +219,6 @@ def masks_flows_to_seg(images, masks, flows, diams, file_names, channels=None):
         channels used to run Cellpose    
     
     """
-    
     if channels is None:
         channels = [0,0]
     
@@ -255,6 +254,9 @@ def masks_flows_to_seg(images, masks, flows, diams, file_names, channels=None):
         flowi.append(flows[3])
         flowi.append(np.concatenate((flows[1], flows[2][np.newaxis,...]), axis=0))
     outlines = masks * utils.masks_to_outlines(masks)
+    if savedir is not None:
+        assert isinstance(file_names, str), "List of names not supported yet"
+        file_names = os.path.join(savedir, os.path.split(file_names)[1])
     base = os.path.splitext(file_names)[0]
     if masks.ndim==3:
         np.save(base+ '_seg.npy',
