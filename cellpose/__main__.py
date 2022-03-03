@@ -120,6 +120,7 @@ def main():
     parser.add_argument('--save_every', required=False,
                         default=100, type=int, help='number of epochs to skip between saves')
     parser.add_argument('--save_each', action='store_true', help='save the model under a different filename per --save_every epoch for later comparsion')
+    parser.add_argument('--save_path', required=False, default=None, help="Directory where to save the trained model")
     
     # misc settings
     parser.add_argument('--verbose', action='store_true', help='flag to output extra information (e.g. diameter metrics) for debugging and fine-tuning parameters')
@@ -371,10 +372,11 @@ def main():
             
             # train segmentation model
             if args.train:
+                save_path = args.dirs if args.save_path is None else args.save_path
                 cpmodel_path = model.train(images, labels, train_files=image_names,
                                            test_data=test_images, test_labels=test_labels, test_files=image_names_test,
                                            learning_rate=args.learning_rate, channels=channels,
-                                           save_path=os.path.realpath(args.dir), save_every=args.save_every,
+                                           save_path=os.path.realpath(save_path), save_every=args.save_every,
                                            save_each=args.save_each,
                                            rescale=rescale,n_epochs=args.n_epochs,
                                            batch_size=args.batch_size, skel=args.skel)
