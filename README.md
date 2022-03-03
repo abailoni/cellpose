@@ -1,10 +1,11 @@
-# Cellpose <img src="cellpose/logo/logo.png" width="250" title="cellpose" alt="cellpose" align="right" vspace = "50">
+# <p>  <b>Cellpose </b> </p>
+<img src="https://raw.githubusercontent.com/kevinjohncutler/cellpose/master/cellpose/logo/logo.png?raw=True" width="250" title="cellpose" alt="cellpose" align="right" vspace = "50">
 
 [![Documentation Status](https://readthedocs.org/projects/cellpose/badge/?version=latest)](https://cellpose.readthedocs.io/en/latest/?badge=latest)
-[![Build Status](https://travis-ci.org/MouseLand/cellpose.svg?branch=master)](https://travis-ci.org/MouseLand/cellpose)
+![tests](https://github.com/mouseland/cellpose/actions/workflows/test_and_deploy.yml/badge.svg)
 [![Coverage Status](https://coveralls.io/repos/github/MouseLand/cellpose/badge.svg?branch=master)](https://coveralls.io/github/MouseLand/cellpose?branch=master)
 [![PyPI version](https://badge.fury.io/py/cellpose.svg)](https://badge.fury.io/py/cellpose)
-[![PyPI - Downloads](https://img.shields.io/pypi/dm/cellpose)](https://pypistats.org/packages/cellpose)
+[![Downloads](https://pepy.tech/badge/cellpose/month)](https://pepy.tech/project/cellpose)
 [![Python version](https://img.shields.io/pypi/pyversions/cellpose)](https://pypistats.org/packages/cellpose)
 [![Licence: GPL v3](https://img.shields.io/github/license/MouseLand/cellpose)](https://github.com/MouseLand/cellpose/blob/master/LICENSE)
 [![Contributors](https://img.shields.io/github/contributors-anon/MouseLand/cellpose)](https://github.com/MouseLand/cellpose/graphs/contributors)
@@ -16,9 +17,24 @@
 
 A generalist algorithm for cell and nucleus segmentation. 
 
-This code was written by Carsen Stringer and Marius Pachitariu. To learn about Cellpose, read the [paper](https://t.co/kBMXmPp3Yn?amp=1) or watch the [talk](https://t.co/JChCsTD0SK?amp=1). For support, please open an [issue](https://github.com/MouseLand/cellpose/issues). 
+Cellpose was written by Carsen Stringer and Marius Pachitariu. To learn about Cellpose, read the [paper](https://t.co/kBMXmPp3Yn?amp=1) or watch the [talk](https://t.co/JChCsTD0SK?amp=1). For support, please open an [issue](https://github.com/MouseLand/cellpose/issues). If you use Cellpose in your work please cite the paper.
 
 If you want to improve Cellpose for yourself and for everyone else, please consider contributing manual segmentations for a few of your images via the built-in GUI interface (see instructions below). 
+
+### UPDATE v1.0 (Jan 2022)
+
+Cellpose has been relatively stable for a while now. Small bugs will continue to be fixed, but we are now releasing a reference 1.0 version. Larger updates to Cellpose will go towards a new 2.0 candidate version to be released soon.  
+
+This update fixes bugs in GUI and plotting. It also stops model weight reloading to improve speed. `resample=True` is default again as in earlier releases, turn off with `--no_resample`. Now logging is turned off by default. Turn on in CLI with `--verbose` flag or in a script/notebook by
+```
+from cellpose.io import logger_setup
+logger_setup();
+```
+
+### UPDATE v0.7 (Nov 2021)
+
+[Omnipose](https://github.com/kevinjohncutler/omnipose) is now officially available and supported as part of Cellpose. `pip install omnipose` and use the 'omni' flag and models to take advantage of it for long cells! (<i>E.g.</i>, filamentous bacteria.) Omnipose was written by Kevin Cutler ([@kevinjohncutler](https://github.com/kevinjohncutler)). To learn about Omnipose, read the [paper](http://biorxiv.org/content/early/2021/11/04/2021.11.03.467199). If you use Omnipose in your work please cite the Cellpose paper and the Omnipose paper.
+
 
 ### UPDATE v0.6 (Dec 2020)
 
@@ -28,11 +44,11 @@ Dynamics are computed using bilinear interpolation by default instead of nearest
 
 ### Run cellpose without local python installation
 
-You can quickly try out Cellpose on the [website](http://www.cellpose.org) first (some features disabled). 
+You can quickly try out Cellpose on the [website](https://www.cellpose.org) first (some features disabled). 
 
 You can also run Cellpose in google colab with a GPU: 
 * a code-based notebook: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MouseLand/cellpose/blob/master/notebooks/run_cellpose_GPU.ipynb)
-* a more user-friendly notebook for 2D segmentation written by [@pr4deepr](https://github.com/pr4deepr): [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MouseLand/cellpose/blob/master/notebooks/Cellpose_2D_v0_1.ipynb)
+* a more user-friendly notebook for 2D segmentation written by [@pr4deepr](https://github.com/pr4deepr): [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MouseLand/cellpose/blob/master/notebooks/Cellpose_cell_segmentation_2D_prediction_only.ipynb)
 * a user-friendly [ZeroCostDL4Mic](https://github.com/HenriquesLab/ZeroCostDL4Mic) notebook that includes training cellpose models, written by [@guijacquemet](https://github.com/guijacquemet): [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/HenriquesLab/ZeroCostDL4Mic/blob/master/Colab_notebooks/Beta%20notebooks/Cellpose_2D_ZeroCostDL4Mic.ipynb)
 
 The colab notebooks are recommended if you have issues with MKL or run speed on your local computer (and are running 3D volumes). Colab does not allow you to run the GUI, but you can save `*_seg.npy` files in colab that you can download and open in the GUI.
@@ -63,7 +79,8 @@ If you are using a GPU, make sure its drivers and the cuda libraries are correct
 2. Open an anaconda prompt / command prompt with `conda` for **python 3** in the path
 3. Create a new environment with `conda create --name cellpose python=3.8`.
 4. To activate this new environment, run `conda activate cellpose`
-5. To install cellpose, use `python -m pip install cellpose`.  
+5. To install the minimal version of cellpose, run `python -m pip install cellpose`.  
+6. To install cellpose, omnipose and the GUI, run `python -m pip install cellpose[all]`. If you're on a zsh server, you may need to use ' ' around the cellpose[all] call: `python -m pip install 'cellpose[all]'.
 
 To upgrade cellpose (package [here](https://pypi.org/project/cellpose/)), run the following in the environment:
 
@@ -73,13 +90,16 @@ python -m pip install cellpose --upgrade
 
 Note you will always have to run `conda activate cellpose` before you run cellpose. If you want to run jupyter notebooks in this environment, then also `conda install jupyter` and `python -m pip install matplotlib`.
 
-If you're feeling adventurous you can also try to install cellpose from your base environment using the command
+You can also try to install cellpose, omnipose and the GUI dependencies from your base environment using the command
 
 ~~~~sh
-python -m pip install cellpose[gui]
+python -m pip install cellpose[all]
 ~~~~
 
-If you have **issues** with installation, see the [docs](https://cellpose.readthedocs.io/en/latest/installation.html) for more details, and then if the suggestions fail, open an issue.
+
+If you have **issues** with installation, see the [docs](https://cellpose.readthedocs.io/en/latest/installation.html) for more details. You can also use the cellpose environment file included in the repository and create a cellpose environment with `conda env create -f environment.yml` which may solve certain dependency issues.
+
+If these suggestions fail, open an issue.
 
 ### GPU version (CUDA) on Windows or Linux
 
@@ -115,6 +135,10 @@ pip install git+https://www.github.com/mouseland/cellpose.git
 ~~~
 
 If you want edit ability to the code, in the github repository folder, run `pip install -e .`. If you want to go back to the pip version of cellpose, then say `pip install cellpose`.
+
+### Download of pretrained models
+
+The models will be downloaded automatically from the [website](https://www.cellpose.org) when you first run a pretrained model in cellpose. If you are having issues with the downloads, you can download them from this [google drive zip file](https://drive.google.com/file/d/1mK8aJDg0jv6s9Vc_5HntpUPmC--p2fE0/view?usp=sharing), unzip the file and put the models in your home directory under the path .cellpose/models/, e.g. on Windows this would be C:/Users/YOUR_USERNAME/.cellpose/models/ or on Linux this would be /home/YOUR_USERNAME/.cellpose/models/, so /home/YOUR_USERNAME/.cellpose/models/cyto_0 is the full path to one model for example. If you cannot access google drive, the models are also available on baidu: Link：https://pan.baidu.com/s/1CARpRGCBHIYaz7KeyoX-fg ; Fetch code：pose ; thanks to @qixinbo!
 
 ## Running cellpose
 

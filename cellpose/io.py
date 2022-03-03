@@ -6,6 +6,13 @@ import tifffile
 import logging, pathlib, sys
 from pathlib import Path
 
+try:
+    from omnipose.utils import format_labels
+    import ncolor, edt
+    OMNI_INSTALLED = True
+except:
+    OMNI_INSTALLED = False
+
 from . import utils, plot, transforms
 
 try:
@@ -27,7 +34,6 @@ except:
     SERVER_UPLOAD = False
 
 io_logger = logging.getLogger(__name__)
-io_logger.setLevel(logging.DEBUG)
 
 def logger_setup():
     cp_dir = pathlib.Path.home().joinpath('.cellpose')
@@ -87,6 +93,7 @@ def imsave(filename, arr):
         if len(arr.shape)>2:
             arr = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
         cv2.imwrite(filename, arr)
+#         skimage.io.imsave(filename, arr.astype()) #cv2 doesn't handle transparency
 
 def get_image_files(folder, mask_filter, imf=None, look_one_level_down=False):
     """ find all images in a folder and if look_one_level_down all subfolders """
@@ -138,14 +145,19 @@ def get_label_files(image_names, mask_filter, imf=None):
     else:
         flow_names = [label_names[n] + '_flows.tif' for n in range(nimg)]
     if not all([os.path.exists(flow) for flow in flow_names]):
-        print('Not all flows are present. Run flow generation again.')
+        io_logger.info('not all flows are present, running flow generation for all images')
         flow_names = None
     
     # check for masks
     if os.path.exists(label_names[0] + mask_filter + '.tif'):
         label_names = [label_names[n] + mask_filter + '.tif' for n in range(nimg)]
+    elif os.path.exists(label_names[0] + mask_filter + '.tiff'):
+        label_names = [label_names[n] + mask_filter + '.tiff' for n in range(nimg)]
     elif os.path.exists(label_names[0] + mask_filter + '.png'):
         label_names = [label_names[n] + mask_filter + '.png' for n in range(nimg)]
+    # todo, allow _seg.npy
+    #elif os.path.exists(label_names[0] + '_seg.npy'):
+    #    io_logger.info('labels found as _seg.npy files, converting to tif')
     else:
         raise ValueError('labels not provided with correct --mask_filter')
     if not all([os.path.exists(label) for label in label_names]):
@@ -234,13 +246,14 @@ def masks_flows_to_seg(images, masks, flows, diams, file_names, channels=None, s
 
     if len(channels)==1:
         channels = channels[0]
-
+    
     flowi = []
     if flows[0].ndim==3:
         Ly, Lx = masks.shape[-2:]
         flowi.append(cv2.resize(flows[0], (Lx, Ly), interpolation=cv2.INTER_NEAREST)[np.newaxis,...])
     else:
         flowi.append(flows[0])
+    
     if flows[0].ndim==3:
         cellprob = (np.clip(transforms.normalize99(flows[2]),0,1) * 255).astype(np.uint8)
         cellprob = cv2.resize(cellprob, (Lx, Ly), interpolation=cv2.INTER_NEAREST)
@@ -292,7 +305,7 @@ def save_to_png(images, masks, flows, file_names):
 # Now saves flows, masks, etc. to separate folders.
 def save_masks(images, masks, flows, file_names, png=True, tif=False, channels=[0,0],
                suffix='',save_flows=False, save_outlines=False, save_ncolor=False, 
-               dir_above=False, in_folders=False, savedir=None, save_txt=True, skel=True):
+               dir_above=False, in_folders=False, savedir=None, save_txt=True, omni=True):
     """ save masks + nicely plotted segmentation image to png and/or tiff
 
     if png, masks[k] for images[k] are saved to file_names[k]+'_cp_masks.png'
@@ -333,7 +346,7 @@ def save_masks(images, masks, flows, file_names, png=True, tif=False, channels=[
         for image, mask, flow, file_name in zip(images, masks, flows, file_names):
             save_masks(image, mask, flow, file_name, png=png, tif=tif, suffix=suffix,dir_above=dir_above,
                        save_flows=save_flows,save_outlines=save_outlines,save_ncolor=save_ncolor,
-                       savedir=savedir,save_txt=save_txt,in_folders=in_folders, skel=skel)
+                       savedir=savedir,save_txt=save_txt,in_folders=in_folders, omni=omni)
         return
     
     if masks.ndim > 2 and not tif:
@@ -365,21 +378,29 @@ def save_masks(images, masks, flows, file_names, png=True, tif=False, channels=[
     check_dir(maskdir) 
 
     exts = []
-    if masks.ndim > 2 or masks.max()>2**16-1:
+    if masks.ndim > 2:
         png = False
         tif = True
     if png:    
-        exts.append('.png')
+        if masks.max() < 2**16:
+            masks = masks.astype(np.uint16) 
+            exts.append('.png')
+        else:
+            png = False 
+            tif = True
+            io_logger.warning('found more than 65535 masks in each image, cannot save PNG, saving as TIF')
     if tif:
         exts.append('.tif')
 
     # format_labels will also automatically use lowest bit depth possible
-    masks = utils.format_labels(masks) 
+    if OMNI_INSTALLED:
+        masks = format_labels(masks) 
 
     # save masks
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for ext in exts:
+            
             imsave(os.path.join(maskdir,basename + '_cp_masks' + suffix + ext), masks)
             
     # MOD: avoid plotting stuff
@@ -391,7 +412,7 @@ def save_masks(images, masks, flows, file_names, png=True, tif=False, channels=[
             np.transpose(img, (1,2,0))
 
         fig = plt.figure(figsize=(12,3))
-        plot.show_segmentation(fig, img, masks, flows[0], skel=skel)
+        plot.show_segmentation(fig, img, masks, flows[0], omni=omni)
         fig.savefig(os.path.join(savedir,basename + '_cp_output' + suffix + '.png'), dpi=300)
         plt.close(fig)
 
@@ -406,7 +427,7 @@ def save_masks(images, masks, flows, file_names, png=True, tif=False, channels=[
         check_dir(outlinedir) 
         outlines = utils.masks_to_outlines(masks)
         outX, outY = np.nonzero(outlines)
-        img0 = transforms.normalize99(images,skel=skel)
+        img0 = transforms.normalize99(images,omni=omni)
         if img0.shape[0] < 4:
             img0 = np.transpose(img0, (1,2,0))
         if img0.shape[-1] < 3 or img0.ndim < 3:
@@ -419,17 +440,19 @@ def save_masks(images, masks, flows, file_names, png=True, tif=False, channels=[
         imsave(os.path.join(outlinedir, basename + '_outlines' + suffix + '.png'),  imgout)
     
     # ncolor labels (ready for color map application)
-    if masks.ndim < 3 and save_ncolor:
+    if masks.ndim < 3 and OMNI_INSTALLED and save_ncolor:
         check_dir(ncolordir)
         #convert masks to minimal n-color reresentation 
         imsave(os.path.join(ncolordir, basename + '_cp_ncolor_masks' + suffix + '.png'),
-               utils.ncolorlabel(masks))
+               ncolor.label(masks))
     
     # save RGB flow picture
     if masks.ndim < 3 and save_flows:
         check_dir(flowdir)
-        imsave(os.path.join(flowdir, basename + '_flows' + suffix + '.png'), (flows[0]*(2**16 - 1)).astype(np.uint16))
-
+        imsave(os.path.join(flowdir, basename + '_flows' + suffix + '.tif'), (flows[0]*(2**16 - 1)).astype(np.uint16))
+        #save full flow data
+        imsave(os.path.join(flowdir, basename + '_dP' + suffix + '.tif'), flows[1]) 
+    
 def save_server(parent=None, filename=None):
     """ Uploads a *_seg.npy file to the bucket.
     

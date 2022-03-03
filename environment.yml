@@ -15,6 +15,7 @@ dependencies:
     - google-cloud-storage
     - tqdm
     - tifffile
+    - fastremap
     - cellpose
     
   

@@ -4,8 +4,8 @@ import numpy as np
 from tqdm import trange, tqdm
 from urllib.parse import urlparse
 import tempfile
-from scipy.ndimage import median_filter
 import cv2
+from scipy.stats import mode
 from . import transforms, dynamics, utils, plot, metrics
 
 try:
@@ -22,34 +22,30 @@ try:
     import torch
 #     from GPUtil import showUtilization as gpu_usage #for gpu memory debugging 
     from torch import nn
-    from torch import optim as torch_optim
-    import torch_optimizer as optim # for RADAM optimizer
     from torch.utils import mkldnn as mkldnn_utils
     from . import resnet_torch
     TORCH_ENABLED = True
     torch_GPU = torch.device('cuda')
     torch_CPU = torch.device('cpu')
-except:
+except Exception as e:
     TORCH_ENABLED = False
+    print(e)
 
 core_logger = logging.getLogger(__name__)
-core_logger.setLevel(logging.DEBUG)
 tqdm_out = utils.TqdmToLogger(core_logger, level=logging.INFO)
 
-# no longer returns nclasses, as it was hard-coded; now it is specified by the user
-# (maybe it should be incorportated into the model name in a future version)
+# nclasses now specified by user or by model type in models.py
 def parse_model_string(pretrained_model):
     if isinstance(pretrained_model, list):
         model_str = os.path.split(pretrained_model[0])[-1]
     else:
         model_str = os.path.split(pretrained_model)[-1]
     if len(model_str)>3 and model_str[:4]=='unet':
-        core_logger.info(f'parsing model string {model_str} to get unet options')
         nclasses = max(2, int(model_str[4]))
     elif len(model_str)>7 and model_str[:8]=='cellpose':
-        core_logger.info(f'parsing model string {model_str} to get cellpose options')
+        nclasses = 3
     else:
-        return None
+        return True, True, False
     ostrs = model_str.split('_')[2::2]
     residual_on = ostrs[0]=='on'
     style_on = ostrs[1]=='on'
@@ -121,7 +117,7 @@ class UnetModel():
     def __init__(self, gpu=False, pretrained_model=False,
                     diam_mean=30., net_avg=True, device=None,
                     residual_on=False, style_on=False, concatenation=True,
-                    nclasses=4, torch=True, nchan=2):
+                    nclasses=3, torch=True, nchan=2):
         self.unet = True
         if torch:
             if not TORCH_ENABLED:
@@ -131,7 +127,12 @@ class UnetModel():
         if device is None:
             sdevice, gpu = assign_device(torch, gpu)
         self.device = device if device is not None else sdevice
-        self.gpu = gpu if device is None else (self.device.type=='cuda')
+        if device is not None:
+            if torch:
+                device_gpu = self.device.type=='cuda'
+            else:
+                device_gpu = self.device.device_type=='gpu'
+        self.gpu = gpu if device is None else device_gpu
         if torch and not self.gpu:
             self.mkldnn = check_mkl(self.torch)
         self.pretrained_model = pretrained_model
@@ -342,7 +343,10 @@ class UnetModel():
             self.net.eval()
             if self.mkldnn:
                 self.net = mkldnn_utils.to_mkldnn(self.net)
-        y, style = self.net(X)
+            with torch.no_grad():
+                y, style = self.net(X)
+        else:
+            y, style = self.net(X)
         if self.mkldnn:
             self.net.to(torch_CPU)
         y = self._from_device(y)
@@ -391,7 +395,7 @@ class UnetModel():
 
         """
         if isinstance(self.pretrained_model, str) or not net_avg:  
-            y, style = self._run_net(img, augment=augment, tile=tile, 
+            y, style = self._run_net(img, augment=augment, tile=tile, tile_overlap=tile_overlap,
                                      bsize=bsize, return_conv=return_conv)
         else:  
             for j in range(len(self.pretrained_model)):
@@ -483,9 +487,9 @@ class UnetModel():
 
         # slice out padding
         y = y[slc]
-
         # transpose so channels axis is last again
         y = np.transpose(y, detranspose)
+
         return y, style
     
     def _run_tiled(self, imgi, augment=False, bsize=224, tile_overlap=0.1, return_conv=False):
@@ -678,7 +682,7 @@ class UnetModel():
 
     def train(self, train_data, train_labels, train_files=None, 
               test_data=None, test_labels=None, test_files=None,
-              channels=None, normalize=True, pretrained_model=None, save_path=None, save_every=50, save_each=False,
+              channels=None, normalize=True, save_path=None, save_every=50, save_each=False,
               learning_rate=0.2, n_epochs=500, momentum=0.9, weight_decay=0.00001, batch_size=8, rescale=False):
         """ train function uses 0-1 mask label and boundary pixels for training """
 
@@ -711,8 +715,7 @@ class UnetModel():
         del train_data[::8], train_classes[::8], train_labels[::8]
 
         model_path = self._train_net(train_data, train_classes, 
-                                     test_data, test_classes,
-                                     pretrained_model, save_path, save_every, save_each,
+                                     test_data, test_classes, save_path, save_every, save_each,
                                      learning_rate, n_epochs, momentum, weight_decay, 
                                      batch_size, rescale)
 
@@ -759,10 +762,10 @@ class UnetModel():
         X = self._to_device(x)
         if self.torch:
             self.optimizer.zero_grad()
-            if self.gpu:
-                self.net.train().cuda()
-            else:
-                self.net.train()
+            #if self.gpu:
+            #    self.net.train() #.cuda()
+            #else:
+            self.net.train()
             y = self.net(X)[0]
             loss = self.loss_fn(lbl,y)
             loss.backward()
@@ -782,34 +785,28 @@ class UnetModel():
         X = self._to_device(x)
         if self.torch:
             self.net.eval()
-            y, style = self.net(X)
-            loss = self.loss_fn(lbl,y)
-            test_loss = loss.item()
-            test_loss *= len(x)
+            with torch.no_grad():
+                y, style = self.net(X)
+                loss = self.loss_fn(lbl,y)
+                test_loss = loss.item()
+                test_loss *= len(x)
         else:
             y, style = self.net(X)
             loss = self.loss_fn(lbl, y)
             test_loss = nd.sum(loss).asnumpy()
         return test_loss
 
-    def _set_optimizer(self, learning_rate, momentum, weight_decay):
+    def _set_optimizer(self, learning_rate, momentum, weight_decay, SGD=False):
         if self.torch:
-        # best optimizer I tested seemed to be RAdam, about 2x as fast as SGD and very stable.
-        # Ranger21 is in beta and might be better/faster, but more testing is needed.
-        # Ranger21 has a convenient current_lr field, whereas RAdam doesn't and I just set this field to the learning rate
-#             self.optimizer = optim.RAdam(self.net.parameters(), lr=learning_rate, betas=(0.95, 0.999), #changed to .95
-#                                          eps=1e-08, weight_decay=weight_decay)
-#             core_logger.info('>>> Using RAdam optimizer')
-# #             self.optimizer = optim.AdaBound(self.net.parameters(), lr=learning_rate, betas=(0.9, 0.999),
-# #                                 gamma=1e-3, eps=1e-08, final_lr=0.15, weight_decay=weight_decay)
-# #             print('>>> Using AdaBound optimizer')
-# #             self.optimizer = Ranger21(self.net.parameters(), lr=learning_rate, weight_decay=weight_decay, num_batches_per_epoch=self.batch_size,
-# #                                       num_epochs=self.n_epochs,num_warmup_iterations=20*self.batch_size, betas=(0.9, 0.999), eps=1e-08)
-# #             print('>>> Using Ranger21 optimizer')
-#             self.optimizer.current_lr = learning_rate
-            core_logger.info('>>> Using SGD optimizer')
-            self.optimizer = torch_optim.SGD(self.net.parameters(), lr=learning_rate,
-                                   momentum=momentum, weight_decay=weight_decay)
+            if SGD:
+                self.optimizer = torch.optim.SGD(self.net.parameters(), lr=learning_rate,
+                                            momentum=momentum, weight_decay=weight_decay)
+            else:
+                import torch_optimizer as optim # for RADAM optimizer
+                self.optimizer = optim.RAdam(self.net.parameters(), lr=learning_rate, betas=(0.95, 0.999), #changed to .95
+                                            eps=1e-08, weight_decay=weight_decay)
+                core_logger.info('>>> Using RAdam optimizer')
+                self.optimizer.current_lr = learning_rate
         else:
             self.optimizer = gluon.Trainer(self.net.collect_params(), 'sgd',{'learning_rate': learning_rate,
                                 'momentum': momentum, 'wd': weight_decay})
@@ -841,60 +838,69 @@ class UnetModel():
                 self.criterion  = gluon.loss.L2Loss()
                 self.criterion2 = gluon.loss.SigmoidBinaryCrossEntropyLoss()
 
-    # Restored defaults. Need to make sure rescale is properly turned off and skel turned on when using CLI. 
+    # Restored defaults. Need to make sure rescale is properly turned off and omni turned on when using CLI.
     def _train_net(self, train_data, train_labels, 
               test_data=None, test_labels=None,
-              pretrained_model=None, save_path=None, save_every=100, save_each=False,
+              save_path=None, save_every=100, save_each=False,
               learning_rate=0.2, n_epochs=500, momentum=0.9, weight_decay=0.00001, 
-              batch_size=8, rescale=True, netstr='cellpose'): 
+              SGD=True, batch_size=8, nimg_per_epoch=None, rescale=True, netstr=None):
         """ train function uses loss function self.loss_fn in models.py"""
         
         d = datetime.datetime.now()
-        self.learning_rate = learning_rate
+
         self.n_epochs = n_epochs
+        if isinstance(learning_rate, (list, np.ndarray)):
+            if isinstance(learning_rate, np.ndarray) and learning_rate.ndim > 1:
+                raise ValueError('learning_rate.ndim must equal 1')
+            elif len(learning_rate) != n_epochs:
+                raise ValueError('if learning_rate given as list or np.ndarray it must have length n_epochs')
+            self.learning_rate = learning_rate
+            self.learning_rate_const = mode(learning_rate)[0][0]
+        else:
+            self.learning_rate_const = learning_rate
+            # set learning rate schedule
+            if SGD:
+                LR = np.linspace(0, self.learning_rate_const, 10)
+                if self.n_epochs > 250:
+                    LR = np.append(LR, self.learning_rate_const*np.ones(self.n_epochs-100))
+                    for i in range(10):
+                        LR = np.append(LR, LR[-1]/2 * np.ones(10))
+                else:
+                    LR = np.append(LR, self.learning_rate_const*np.ones(max(0,self.n_epochs-10)))
+            else:
+                LR = self.learning_rate_const * np.ones(self.n_epochs)
+            self.learning_rate = LR
+
         self.batch_size = batch_size
-        self._set_optimizer(self.learning_rate, momentum, weight_decay)
+        self._set_optimizer(self.learning_rate[0], momentum, weight_decay, SGD)
         self._set_criterion()
         
         nimg = len(train_data)
 
         # compute average cell diameter
         if rescale:
-            core_logger.info('>>>> I am rescaling images automatically during training!<<<<')
-            diam_train = np.array([utils.diameters(train_labels[k][0],skel=self.skel)[0] for k in range(len(train_labels))])
+            diam_train = np.array([utils.diameters(train_labels[k][0],omni=self.omni)[0] for k in range(len(train_labels))])
             diam_train[diam_train<5] = 5.
             if test_data is not None:
-                diam_test = np.array([utils.diameters(test_labels[k][0],skel=self.skel)[0] for k in range(len(test_labels))])
+                diam_test = np.array([utils.diameters(test_labels[k][0],omni=self.omni)[0] for k in range(len(test_labels))])
                 diam_test[diam_test<5] = 5.
             scale_range = 0.5
+            core_logger.info('>>>> median diameter set to = %d'%self.diam_mean)
         else:
             scale_range = 1.0
 
         nchan = train_data[0].shape[0]
         core_logger.info('>>>> training network with %d channel input <<<<'%nchan)
-        core_logger.info('>>>> saving every %d epochs'%save_every)
-        core_logger.info('>>>> median diameter = %d'%self.diam_mean)
-        core_logger.info('>>>> LR: %0.5f, batch_size: %d, weight_decay: %0.5f'%(self.learning_rate, self.batch_size, weight_decay))
-        core_logger.info('>>>> ntrain = %d'%nimg)
-        core_logger.info('>>>> rescale is %d'%rescale)
-        if test_data is not None:
-            core_logger.info('>>>> ntest = %d'%len(test_data))
-        core_logger.info(train_data[0].shape)
+        core_logger.info('>>>> LR: %0.5f, batch_size: %d, weight_decay: %0.5f'%(self.learning_rate_const, self.batch_size, weight_decay))
 
-        # set learning rate schedule
-        LR = np.linspace(0, self.learning_rate, 10)
-        if self.n_epochs > 250 and self.n_epochs <= 800:
-            LR = np.append(LR, self.learning_rate*np.ones(self.n_epochs-100))
-            for i in range(10):
-                LR = np.append(LR, LR[-1]/2 * np.ones(10))
-        elif self.n_epochs > 1500:
-            LR = np.append(LR, self.learning_rate*np.ones(self.n_epochs-1400))
-            for i in range(14):
-                LR = np.append(LR, LR[-1]/2 * np.ones(100))
+        if test_data is not None:
+            core_logger.info(f'>>>> ntrain = {nimg}, ntest = {len(test_data)}')
         else:
-            LR = np.append(LR, self.learning_rate*np.ones(max(0,self.n_epochs-10)))
+            core_logger.info(f'>>>> ntrain = {nimg}')
 
         tic = time.time()
+
+
 
         lavg, nsum = 0, 0
 
@@ -913,26 +919,35 @@ class UnetModel():
         # cannot train with mkldnn
         self.net.mkldnn = False
 
-        for iepoch in range(self.n_epochs):
-            np.random.seed(iepoch)
+        # get indices for each epoch for training
+        np.random.seed(0)
+        inds_all = np.zeros((0,), 'int32')
+        if nimg_per_epoch is None or nimg > nimg_per_epoch:
+            nimg_per_epoch = nimg
+        core_logger.info(f'>>>> nimg_per_epoch = {nimg_per_epoch}')
+        while len(inds_all) < n_epochs * nimg_per_epoch:
             rperm = np.random.permutation(nimg)
-            self._set_learning_rate(LR[iepoch])
+            inds_all = np.hstack((inds_all, rperm))
 
-            for ibatch in range(0,nimg,batch_size):
+        for iepoch in range(self.n_epochs):
+            if SGD:
+                self._set_learning_rate(self.learning_rate[iepoch])
+            np.random.seed(iepoch)
+            rperm = inds_all[iepoch*nimg_per_epoch:(iepoch+1)*nimg_per_epoch]
+            for ibatch in range(0,nimg_per_epoch,batch_size):
                 inds = rperm[ibatch:ibatch+batch_size]
                 rsc = diam_train[inds] / self.diam_mean if rescale else np.ones(len(inds), np.float32)
                 # now passing in the full train array, need the labels for distance field
                 imgi, lbl, scale = transforms.random_rotate_and_resize(
                                         [train_data[i] for i in inds], Y=[train_labels[i] for i in inds],
-                                        rescale=rsc, scale_range=scale_range, unet=self.unet, inds=inds, skel=self.skel)
-
+                                        rescale=rsc, scale_range=scale_range, unet=self.unet, inds=inds, omni=self.omni)
                 if self.unet and lbl.shape[1]>1 and rescale:
                     lbl[:,1] /= diam_batch[:,np.newaxis,np.newaxis]**2
                 train_loss = self._train_step(imgi, lbl)
                 lavg += train_loss
                 nsum += len(imgi) 
             
-            if iepoch%10==0 or iepoch<10:
+            if iepoch%10==0 or iepoch==5:
                 lavg = lavg / nsum
                 if test_data is not None:
                     lavgt, nsum = 0., 0
@@ -943,7 +958,7 @@ class UnetModel():
                         rsc = diam_test[inds] / self.diam_mean if rescale else np.ones(len(inds), np.float32)
                         imgi, lbl, scale = transforms.random_rotate_and_resize(
                                             [test_data[i] for i in inds], Y=[test_labels[i] for i in inds], 
-                                            scale_range=0., rescale=rsc, unet=self.unet, inds=inds, skel=self.skel) 
+                                            scale_range=0., rescale=rsc, unet=self.unet, inds=inds, omni=self.omni)
                         if self.unet and lbl.shape[1]>1 and rescale:
                             lbl[:,1] *= scale[0]**2
 
@@ -952,25 +967,34 @@ class UnetModel():
                         nsum += len(imgi)
 
                     core_logger.info('Epoch %d, Time %4.1fs, Loss %2.4f, Loss Test %2.4f, LR %2.4f'%
-                            (iepoch, time.time()-tic, lavg, lavgt/nsum, LR[iepoch]))
+                            (iepoch, time.time()-tic, lavg, lavgt/nsum, self.learning_rate[iepoch]))
                 else:
                     core_logger.info('Epoch %d, Time %4.1fs, Loss %2.4f, LR %2.4f'%
-                            (iepoch, time.time()-tic, lavg, LR[iepoch]))
+                            (iepoch, time.time()-tic, lavg, self.learning_rate[iepoch]))
+                
                 lavg, nsum = 0, 0
                             
             if save_path is not None:
                 if iepoch==self.n_epochs-1 or iepoch%save_every==1:
                     # save model at the end
                     if save_each: #separate files as model progresses 
-                        file_name = '{}_{}_{}_{}'.format(self.net_type, file_label, 
-                                                         d.strftime("%Y_%m_%d_%H_%M_%S.%f"),
-                                                         'epoch_'+str(iepoch)) 
+                        if netstr is None:
+                            file_name = '{}_{}_{}_{}'.format(self.net_type, file_label,
+                                                             d.strftime("%Y_%m_%d_%H_%M_%S.%f"),
+                                                             'epoch_'+str(iepoch))
+                        else:
+                            file_name = '{}_{}'.format(netstr, 'epoch_'+str(iepoch))
                     else:
-                        file_name = '{}_{}_{}'.format(self.net_type, file_label, d.strftime("%Y_%m_%d_%H_%M_%S.%f"))
+                        if netstr is None:
+                            file_name = '{}_{}_{}'.format(self.net_type, file_label, d.strftime("%Y_%m_%d_%H_%M_%S.%f"))
+                        else:
+                            file_name = netstr
                     file_name = os.path.join(file_path, file_name)
                     ksave += 1
                     core_logger.info(f'saving network parameters to {file_name}')
                     self.net.save_model(file_name)
+            else:
+                file_name = save_path
 
         # reset to mkldnn if available
         self.net.mkldnn = self.mkldnn
