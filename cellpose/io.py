@@ -402,8 +402,7 @@ def save_masks(images, masks, flows, file_names, png=True, tif=False, channels=[
         for ext in exts:
             
             imsave(os.path.join(maskdir,basename + '_cp_masks' + suffix + ext), masks)
-            
-    # MOD: avoid plotting stuff
+
     if png and MATPLOTLIB and not min(images.shape) > 3:
         img = images.copy()
         if img.ndim<3:
